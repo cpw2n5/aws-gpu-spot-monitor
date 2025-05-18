@@ -1,0 +1,44 @@
+{
+  "name": "aws-gpu-spot-monitor",
+  "version": "1.0.0",
+  "description": "AWS GPU Spot Instance Monitor with Folding@Home integration",
+  "main": "index.js",
+  "scripts": {
+    "start": "sls offline",
+    "deploy": "sls deploy",
+    "test": "jest"
+  },
+  "keywords": [
+    "aws",
+    "spot",
+    "instance",
+    "gpu",
+    "folding@home",
+    "serverless"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.400.0",
+    "@aws-sdk/client-dynamodb": "^3.400.0",
+    "@aws-sdk/client-ec2": "^3.400.0",
+    "@aws-sdk/lib-dynamodb": "^3.400.0",
+    "aws-lambda": "^1.0.7",
+    "aws-sdk": "^2.1450.0",
+    "aws-serverless-express": "^3.4.0",
+    "axios": "^1.5.0",
+    "body-parser": "^1.20.2",
+    "cls-hooked": "^4.2.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^9.0.0",
+    "winston": "^3.10.0",
+    "winston-cloudwatch": "^6.1.1"
+  },
+  "devDependencies": {
+    "jest": "^29.6.4",
+    "serverless": "^3.34.0",
+    "serverless-offline": "^12.0.4"
+  }
+}
