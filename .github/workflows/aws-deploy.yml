@@ -1,0 +1,104 @@
+name: AWS Deployment
+
+# This workflow is optional and requires AWS credentials to be set up as GitHub secrets
+# You'll need to add the following secrets to your GitHub repository:
+# - AWS_ACCESS_KEY_ID
+# - AWS_SECRET_ACCESS_KEY
+# - AWS_REGION (or use the default region specified in the env section)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  NODE_VERSION: '18'
+  AWS_REGION: 'us-east-1'
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'aws-gpu-spot-monitor/package-lock.json'
+      
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ./aws-gpu-spot-monitor
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Deploy with Serverless
+        run: npx serverless deploy --stage ${{ github.event.inputs.environment }}
+        working-directory: ./aws-gpu-spot-monitor
+  
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: [deploy-backend]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'aws-gpu-spot-monitor/frontend/package-lock.json'
+      
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ./aws-gpu-spot-monitor/frontend
+      
+      - name: Build
+        run: npm run build
+        working-directory: ./aws-gpu-spot-monitor/frontend
+        env:
+          # You may need to add environment-specific variables here
+          REACT_APP_API_URL: ${{ secrets.API_URL }}
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Deploy to S3
+        run: |
+          # Replace with your actual S3 bucket name or use a GitHub secret
+          aws s3 sync build/ s3://aws-gpu-spot-monitor-${{ github.event.inputs.environment }}-frontend --delete
+        working-directory: ./aws-gpu-spot-monitor/frontend
+      
+      - name: Invalidate CloudFront (if applicable)
+        run: |
+          # Replace with your actual CloudFront distribution ID or use a GitHub secret
+          # Uncomment when you have a CloudFront distribution set up
+          # aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"
+        working-directory: ./aws-gpu-spot-monitor/frontend

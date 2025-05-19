@@ -1,0 +1,68 @@
+name: Terraform Validation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'aws-gpu-spot-monitor/terraform/**'
+      - '.github/workflows/terraform-validate.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'aws-gpu-spot-monitor/terraform/**'
+      - '.github/workflows/terraform-validate.yml'
+
+env:
+  TERRAFORM_VERSION: '1.5.7'
+
+jobs:
+  terraform-validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        working-directory: ./aws-gpu-spot-monitor/terraform
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+        working-directory: ./aws-gpu-spot-monitor/terraform
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ./aws-gpu-spot-monitor/terraform
+
+  tfsec:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run TFSec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: ./aws-gpu-spot-monitor/terraform
+
+  checkov:
+    name: Compliance Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ./aws-gpu-spot-monitor/terraform
+          framework: terraform
+          output_format: cli
+          soft_fail: true
