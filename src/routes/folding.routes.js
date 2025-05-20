@@ -1,8 +1,6 @@
 const express = require('express');
 const foldingService = require('../services/folding.service');
 const { BadRequestError } = require('../utils/errors');
-const logger = require('../utils/logger');
-
 const router = express.Router();
 
 /**

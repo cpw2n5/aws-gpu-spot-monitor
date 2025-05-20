@@ -1,19 +1,9 @@
-const { 
-  CognitoIdentityProviderClient, 
-  InitiateAuthCommand,
-  SignUpCommand,
-  ConfirmSignUpCommand,
-  ForgotPasswordCommand,
-  ConfirmForgotPasswordCommand,
-  GetUserCommand,
-  GlobalSignOutCommand
-} = require('@aws-sdk/client-cognito-identity-provider');
-const jwt = require('jsonwebtoken');
-const { v4: uuidv4 } = require('uuid');
-const logger = require('../utils/logger');
-const { UnauthorizedError, BadRequestError } = require('../utils/errors');
-const dynamodb = require('../utils/dynamodb');
-const secrets = require('../utils/secrets');
+import { CognitoIdentityProviderClient, InitiateAuthCommand, SignUpCommand, ConfirmSignUpCommand, ForgotPasswordCommand, ConfirmForgotPasswordCommand, GetUserCommand, GlobalSignOutCommand } from '@aws-sdk/client-cognito-identity-provider';
+import { decode } from 'jsonwebtoken';
+import { info, error as _error } from '../utils/logger';
+import { UnauthorizedError, BadRequestError } from '../utils/errors';
+import { putItem, getItem } from '../utils/dynamodb';
+import { getSecret, putSecret } from '../utils/secrets';
 
 // Secret names
 const COGNITO_CONFIG_SECRET = process.env.COGNITO_CONFIG_SECRET || 'aws-gpu-spot-monitor/cognito-config';
@@ -39,20 +29,20 @@ const initCognitoConfig = async () => {
     
     // If not available in environment, get from Secrets Manager
     if (!USER_POOL_ID || !USER_POOL_CLIENT_ID) {
-      logger.info('Fetching Cognito configuration from Secrets Manager');
-      const cognitoConfig = await secrets.getSecret(COGNITO_CONFIG_SECRET);
+      info('Fetching Cognito configuration from Secrets Manager');
+      const cognitoConfig = await getSecret(COGNITO_CONFIG_SECRET);
       
       USER_POOL_ID = cognitoConfig.userPoolId;
       USER_POOL_CLIENT_ID = cognitoConfig.userPoolClientId;
       
-      logger.info('Successfully loaded Cognito configuration from Secrets Manager');
+      info('Successfully loaded Cognito configuration from Secrets Manager');
     }
     
     if (!USER_POOL_ID || !USER_POOL_CLIENT_ID) {
       throw new Error('Cognito configuration not found in environment or Secrets Manager');
     }
   } catch (error) {
-    logger.error('Error initializing Cognito configuration', { error });
+    _error('Error initializing Cognito configuration', { error });
     throw error;
   }
 };
@@ -62,7 +52,7 @@ const initCognitoConfig = async () => {
   try {
     await initCognitoConfig();
   } catch (error) {
-    logger.error('Failed to initialize Cognito configuration', { error });
+    _error('Failed to initialize Cognito configuration', { error });
     // Don't throw here to allow the service to start, but authentication will fail
   }
 })();
@@ -110,16 +100,16 @@ const registerUser = async (email, password, attributes = {}) => {
       ...attributes
     };
     
-    await dynamodb.putItem('users', user);
+    await putItem('users', user);
     
-    logger.info('User registered successfully', { userId, email });
+    info('User registered successfully', { userId, email });
     
     return {
       userId,
       userConfirmed: response.UserConfirmed
     };
   } catch (error) {
-    logger.error('Error registering user', { error, email });
+    _error('Error registering user', { error, email });
     if (error.name === 'UsernameExistsException') {
       throw new BadRequestError('User with this email already exists');
     }
@@ -148,11 +138,11 @@ const confirmRegistration = async (email, confirmationCode) => {
     
     await cognitoClient.send(command);
     
-    logger.info('User registration confirmed', { email });
+    info('User registration confirmed', { email });
     
     return { success: true };
   } catch (error) {
-    logger.error('Error confirming user registration', { error, email });
+    _error('Error confirming user registration', { error, email });
     if (error.name === 'CodeMismatchException') {
       throw new BadRequestError('Invalid verification code');
     }
@@ -186,12 +176,12 @@ const loginUser = async (email, password) => {
     const { IdToken, AccessToken, RefreshToken, ExpiresIn } = response.AuthenticationResult;
     
     // Get user from DynamoDB
-    const decodedToken = jwt.decode(IdToken);
+    const decodedToken = decode(IdToken);
     const userId = decodedToken.sub;
     
-    const user = await dynamodb.getItem('users', { id: userId });
+    const user = await getItem('users', { id: userId });
     
-    logger.info('User logged in successfully', { userId, email });
+    info('User logged in successfully', { userId, email });
     
     return {
       userId,
@@ -203,7 +193,7 @@ const loginUser = async (email, password) => {
       user
     };
   } catch (error) {
-    logger.error('Error logging in user', { error, email });
+    _error('Error logging in user', { error, email });
     if (error.name === 'NotAuthorizedException') {
       throw new UnauthorizedError('Invalid email or password');
     }
@@ -234,7 +224,7 @@ const refreshTokens = async (refreshToken) => {
     const response = await cognitoClient.send(command);
     const { IdToken, AccessToken, ExpiresIn } = response.AuthenticationResult;
     
-    logger.info('Tokens refreshed successfully');
+    info('Tokens refreshed successfully');
     
     return {
       idToken: IdToken,
@@ -242,7 +232,7 @@ const refreshTokens = async (refreshToken) => {
       expiresIn: ExpiresIn
     };
   } catch (error) {
-    logger.error('Error refreshing tokens', { error });
+    _error('Error refreshing tokens', { error });
     throw new UnauthorizedError('Invalid refresh token');
   }
 };
@@ -266,11 +256,11 @@ const forgotPassword = async (email) => {
     
     await cognitoClient.send(command);
     
-    logger.info('Forgot password initiated', { email });
+    info('Forgot password initiated', { email });
     
     return { success: true };
   } catch (error) {
-    logger.error('Error initiating forgot password', { error, email });
+    _error('Error initiating forgot password', { error, email });
     throw error;
   }
 };
@@ -298,11 +288,11 @@ const confirmNewPassword = async (email, confirmationCode, newPassword) => {
     
     await cognitoClient.send(command);
     
-    logger.info('Password reset confirmed', { email });
+    info('Password reset confirmed', { email });
     
     return { success: true };
   } catch (error) {
-    logger.error('Error confirming new password', { error, email });
+    _error('Error confirming new password', { error, email });
     if (error.name === 'CodeMismatchException') {
       throw new BadRequestError('Invalid verification code');
     }
@@ -333,9 +323,9 @@ const getUserProfile = async (accessToken) => {
     const userId = attributes.sub;
     
     // Get user from DynamoDB
-    const user = await dynamodb.getItem('users', { id: userId });
+    const user = await getItem('users', { id: userId });
     
-    logger.info('User profile retrieved', { userId });
+    info('User profile retrieved', { userId });
     
     return {
       userId,
@@ -343,7 +333,7 @@ const getUserProfile = async (accessToken) => {
       ...user
     };
   } catch (error) {
-    logger.error('Error getting user profile', { error });
+    _error('Error getting user profile', { error });
     throw new UnauthorizedError('Invalid access token');
   }
 };
@@ -361,11 +351,11 @@ const logoutUser = async (accessToken) => {
     
     await cognitoClient.send(command);
     
-    logger.info('User logged out successfully');
+    info('User logged out successfully');
     
     return { success: true };
   } catch (error) {
-    logger.error('Error logging out user', { error });
+    _error('Error logging out user', { error });
     throw error;
   }
 };
@@ -383,7 +373,7 @@ const storeCognitoConfig = async (userPoolId, userPoolClientId) => {
       userPoolClientId
     };
     
-    await secrets.putSecret(
+    await putSecret(
       COGNITO_CONFIG_SECRET, 
       config, 
       'Cognito configuration for AWS GPU Spot Monitor'
@@ -393,16 +383,16 @@ const storeCognitoConfig = async (userPoolId, userPoolClientId) => {
     USER_POOL_ID = userPoolId;
     USER_POOL_CLIENT_ID = userPoolClientId;
     
-    logger.info('Cognito configuration stored in Secrets Manager');
+    info('Cognito configuration stored in Secrets Manager');
     
     return { success: true };
   } catch (error) {
-    logger.error('Error storing Cognito configuration', { error });
+    _error('Error storing Cognito configuration', { error });
     throw error;
   }
 };
 
-module.exports = {
+export default {
   registerUser,
   confirmRegistration,
   loginUser,

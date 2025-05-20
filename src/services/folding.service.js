@@ -1,10 +1,10 @@
-const axios = require('axios');
-const { v4: uuidv4 } = require('uuid');
-const logger = require('../utils/logger');
-const dynamodb = require('../utils/dynamodb');
-const { BadRequestError, NotFoundError } = require('../utils/errors');
-const instanceService = require('./instance.service');
-const foldingMetrics = require('../utils/folding-metrics');
+import { get } from 'axios';
+import { v4 as uuidv4 } from 'uuid';
+import { info, error as _error, withCorrelationId, warn } from '../utils/logger';
+import { queryItems, putItem, deleteItem, updateItem } from '../utils/dynamodb';
+import { BadRequestError, NotFoundError } from '../utils/errors';
+import { getInstance } from './instance.service';
+import { publishFoldingMetrics, publishGpuPerformanceMetrics, publishSpotInstanceMetrics } from '../utils/folding-metrics';
 
 /**
  * Create or update Folding@Home configuration
@@ -28,7 +28,7 @@ const saveConfiguration = async (userId, config) => {
       }
     };
     
-    const existingConfigs = await dynamodb.queryItems('folding-config', params);
+    const existingConfigs = await queryItems('folding-config', params);
     
     let configId;
     let createdAt;
@@ -56,13 +56,13 @@ const saveConfiguration = async (userId, config) => {
     };
     
     // Save to DynamoDB
-    await dynamodb.putItem('folding-config', foldingConfig);
+    await putItem('folding-config', foldingConfig);
     
-    logger.info('Saved Folding@Home configuration', { userId, configId });
+    info('Saved Folding@Home configuration', { userId, configId });
     
     return foldingConfig;
   } catch (error) {
-    logger.error('Error saving Folding@Home configuration', { error, userId });
+    _error('Error saving Folding@Home configuration', { error, userId });
     throw error;
   }
 };
@@ -82,7 +82,7 @@ const getConfiguration = async (userId) => {
       }
     };
     
-    const configs = await dynamodb.queryItems('folding-config', params);
+    const configs = await queryItems('folding-config', params);
     
     if (configs.length === 0) {
       // Return default configuration if none exists
@@ -97,7 +97,7 @@ const getConfiguration = async (userId) => {
     // Return the first configuration (users should only have one)
     return configs[0];
   } catch (error) {
-    logger.error('Error getting Folding@Home configuration', { error, userId });
+    _error('Error getting Folding@Home configuration', { error, userId });
     throw error;
   }
 };
@@ -117,23 +117,23 @@ const deleteConfiguration = async (userId) => {
       }
     };
     
-    const configs = await dynamodb.queryItems('folding-config', params);
+    const configs = await queryItems('folding-config', params);
     
     if (configs.length === 0) {
       throw new NotFoundError('Configuration not found');
     }
     
     // Delete the configuration
-    await dynamodb.deleteItem('folding-config', { id: configs[0].id });
+    await deleteItem('folding-config', { id: configs[0].id });
     
-    logger.info('Deleted Folding@Home configuration', { userId });
+    info('Deleted Folding@Home configuration', { userId });
     
     return {
       success: true,
       message: 'Configuration deleted successfully'
     };
   } catch (error) {
-    logger.error('Error deleting Folding@Home configuration', { error, userId });
+    _error('Error deleting Folding@Home configuration', { error, userId });
     throw error;
   }
 };
@@ -147,7 +147,7 @@ const deleteConfiguration = async (userId) => {
 const applyConfigurationToInstance = async (userId, instanceId) => {
   try {
     // Get the instance
-    const instance = await instanceService.getInstance(instanceId);
+    const instance = await getInstance(instanceId);
     
     // Verify that the instance belongs to the user
     if (instance.userId !== userId) {
@@ -177,7 +177,7 @@ const applyConfigurationToInstance = async (userId, instanceId) => {
     };
     
     // Update instance in DynamoDB
-    const updatedInstance = await dynamodb.updateItem(
+    const updatedInstance = await updateItem(
       'instances',
       { id: instanceId },
       'SET foldingConfig = :foldingConfig, updatedAt = :updatedAt',
@@ -187,7 +187,7 @@ const applyConfigurationToInstance = async (userId, instanceId) => {
       }
     );
     
-    logger.info('Applied Folding@Home configuration to instance', { 
+    info('Applied Folding@Home configuration to instance', { 
       userId, 
       instanceId 
     });
@@ -201,7 +201,7 @@ const applyConfigurationToInstance = async (userId, instanceId) => {
       }
     };
   } catch (error) {
-    logger.error('Error applying Folding@Home configuration', { error, userId, instanceId });
+    _error('Error applying Folding@Home configuration', { error, userId, instanceId });
     throw error;
   }
 };
@@ -220,7 +220,7 @@ const getStats = async (user, team) => {
     
     // Fetch stats from Folding@Home API
     // Note: This is a mock implementation as the actual API endpoints may vary
-    const response = await axios.get(`https://stats.foldingathome.org/api/donor/${user}`);
+    const response = await get(`https://stats.foldingathome.org/api/donor/${user}`);
     
     if (!response.data) {
       throw new Error('Failed to fetch Folding@Home stats');
@@ -237,11 +237,11 @@ const getStats = async (user, team) => {
       last_updated: new Date().toISOString()
     };
     
-    logger.info('Retrieved Folding@Home stats', { user, team });
+    info('Retrieved Folding@Home stats', { user, team });
     
     return stats;
   } catch (error) {
-    logger.error('Error getting Folding@Home stats', { error, user, team });
+    _error('Error getting Folding@Home stats', { error, user, team });
     
     // Return default stats if API call fails
     return {
@@ -269,9 +269,9 @@ const getInstanceStatus = async (userId, instanceId) => {
     const correlationId = uuidv4();
     
     // Use enhanced logging with correlation ID
-    return logger.withCorrelationId(async () => {
+    return withCorrelationId(async () => {
       // Get the instance
-      const instance = await instanceService.getInstance(instanceId);
+      const instance = await getInstance(instanceId);
       
       // Verify that the instance belongs to the user
       if (instance.userId !== userId) {
@@ -280,7 +280,7 @@ const getInstanceStatus = async (userId, instanceId) => {
       
       // Check if instance has Folding@Home configuration
       if (!instance.foldingConfig) {
-        logger.info('Folding@Home not configured for instance', {
+        info('Folding@Home not configured for instance', {
           metadata: { userId, instanceId, correlationId }
         });
         
@@ -328,10 +328,10 @@ const getInstanceStatus = async (userId, instanceId) => {
           stats.progress = foldingProgress;
           
           // Publish metrics
-          await foldingMetrics.publishFoldingMetrics(userId, instanceId, stats);
+          await publishFoldingMetrics(userId, instanceId, stats);
           
           // Get instance details for GPU performance metrics
-          const instanceDetails = await instanceService.getInstance(instanceId);
+          const instanceDetails = await getInstance(instanceId);
           
           // If we have instance type and spot price information, publish GPU performance metrics
           if (instanceDetails && instanceDetails.instanceType) {
@@ -350,7 +350,7 @@ const getInstanceStatus = async (userId, instanceId) => {
                 spotPrice = spotPricesResponse.prices[0].price;
               }
             } catch (priceError) {
-              logger.warn('Failed to get spot price for GPU metrics', {
+              warn('Failed to get spot price for GPU metrics', {
                 metadata: {
                   error: priceError.message,
                   instanceId,
@@ -360,7 +360,7 @@ const getInstanceStatus = async (userId, instanceId) => {
             }
             
             // Publish GPU-specific performance metrics
-            await foldingMetrics.publishGpuPerformanceMetrics(
+            await publishGpuPerformanceMetrics(
               instanceId,
               instanceDetails.instanceType,
               stats.score || 0,
@@ -382,7 +382,7 @@ const getInstanceStatus = async (userId, instanceId) => {
       
       // Publish spot instance metrics
       if (instance.ec2InstanceId) {
-        await foldingMetrics.publishSpotInstanceMetrics(
+        await publishSpotInstanceMetrics(
           instanceId,
           healthScore,
           hasInterruptionWarning,
@@ -390,7 +390,7 @@ const getInstanceStatus = async (userId, instanceId) => {
         );
       }
       
-      logger.info('Retrieved Folding@Home instance status', {
+      info('Retrieved Folding@Home instance status', {
         metadata: {
           userId,
           instanceId,
@@ -414,7 +414,7 @@ const getInstanceStatus = async (userId, instanceId) => {
       };
     }, correlationId);
   } catch (error) {
-    logger.error('Error getting Folding@Home instance status', {
+    _error('Error getting Folding@Home instance status', {
       metadata: {
         error: error.message,
         stack: error.stack,
@@ -484,16 +484,16 @@ const getGpuPerformanceData = async (chartType) => {
       ];
     }
     
-    logger.info('Retrieved GPU performance data', { chartType });
+    info('Retrieved GPU performance data', { chartType });
     
     return chartData;
   } catch (error) {
-    logger.error('Error getting GPU performance data', { error, chartType });
+    _error('Error getting GPU performance data', { error, chartType });
     return null;
   }
 };
 
-module.exports = {
+export default {
   saveConfiguration,
   getConfiguration,
   deleteConfiguration,

@@ -1,8 +1,6 @@
 const express = require('express');
 const instanceService = require('../services/instance.service');
 const { BadRequestError } = require('../utils/errors');
-const logger = require('../utils/logger');
-
 const router = express.Router();
 
 /**

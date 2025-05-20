@@ -5,7 +5,6 @@ import {
   Stat,
   StatLabel,
   StatNumber,
-  StatHelpText,
   Heading,
   Text,
   Flex,
@@ -17,7 +16,6 @@ import {
 } from '@chakra-ui/react';
 import { FiServer, FiDollarSign, FiCpu, FiAward } from 'react-icons/fi';
 import { useQuery } from '@tanstack/react-query';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import SpotPriceService from '../../services/spotPrice.service';
 import InstanceService from '../../services/instance.service';
 import FoldingService from '../../services/folding.service';

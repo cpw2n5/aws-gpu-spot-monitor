@@ -1,9 +1,8 @@
-const express = require('express');
-const authService = require('../services/auth.service');
-const { BadRequestError } = require('../utils/errors');
-const logger = require('../utils/logger');
+import { Router } from 'express';
+import { registerUser, confirmRegistration, loginUser, refreshTokens, forgotPassword, confirmNewPassword, getUserProfile, logoutUser } from '../services/auth.service';
+import { BadRequestError } from '../utils/errors';
 
-const router = express.Router();
+const router = Router();
 
 /**
  * @route POST /api/auth/register
@@ -18,7 +17,7 @@ router.post('/register', async (req, res, next) => {
       throw new BadRequestError('Email and password are required');
     }
     
-    const result = await authService.registerUser(email, password, attributes);
+    const result = await registerUser(email, password, attributes);
     
     res.status(201).json({
       status: 'success',
@@ -42,7 +41,7 @@ router.post('/confirm', async (req, res, next) => {
       throw new BadRequestError('Email and confirmation code are required');
     }
     
-    const result = await authService.confirmRegistration(email, confirmationCode);
+    const result = await confirmRegistration(email, confirmationCode);
     
     res.status(200).json({
       status: 'success',
@@ -66,7 +65,7 @@ router.post('/login', async (req, res, next) => {
       throw new BadRequestError('Email and password are required');
     }
     
-    const result = await authService.loginUser(email, password);
+    const result = await loginUser(email, password);
     
     res.status(200).json({
       status: 'success',
@@ -90,7 +89,7 @@ router.post('/refresh', async (req, res, next) => {
       throw new BadRequestError('Refresh token is required');
     }
     
-    const result = await authService.refreshTokens(refreshToken);
+    const result = await refreshTokens(refreshToken);
     
     res.status(200).json({
       status: 'success',
@@ -114,7 +113,7 @@ router.post('/forgot-password', async (req, res, next) => {
       throw new BadRequestError('Email is required');
     }
     
-    const result = await authService.forgotPassword(email);
+    const result = await forgotPassword(email);
     
     res.status(200).json({
       status: 'success',
@@ -138,7 +137,7 @@ router.post('/reset-password', async (req, res, next) => {
       throw new BadRequestError('Email, confirmation code, and new password are required');
     }
     
-    const result = await authService.confirmNewPassword(email, confirmationCode, newPassword);
+    const result = await confirmNewPassword(email, confirmationCode, newPassword);
     
     res.status(200).json({
       status: 'success',
@@ -163,7 +162,7 @@ router.get('/profile', async (req, res, next) => {
     }
     
     const accessToken = authHeader.split(' ')[1];
-    const result = await authService.getUserProfile(accessToken);
+    const result = await getUserProfile(accessToken);
     
     res.status(200).json({
       status: 'success',
@@ -188,7 +187,7 @@ router.post('/logout', async (req, res, next) => {
     }
     
     const accessToken = authHeader.split(' ')[1];
-    const result = await authService.logoutUser(accessToken);
+    const result = await logoutUser(accessToken);
     
     res.status(200).json({
       status: 'success',
@@ -199,4 +198,4 @@ router.post('/logout', async (req, res, next) => {
   }
 });
 
-module.exports = router;
+export default router;

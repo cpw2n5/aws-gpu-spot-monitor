@@ -112,7 +112,6 @@ jobs:
     needs: [build-and-test, security-scan]
     if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
     runs-on: ubuntu-latest
-    environment: dev
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v3
@@ -148,7 +147,6 @@ jobs:
     needs: [build-and-test, security-scan]
     if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
     runs-on: ubuntu-latest
-    environment: staging
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v3
@@ -184,7 +182,6 @@ jobs:
     needs: [deploy-staging]
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
     runs-on: ubuntu-latest
-    environment: prod
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v3

@@ -1,12 +1,12 @@
-const awsServerlessExpress = require('aws-serverless-express');
-const app = require('./app');
-const logger = require('./utils/logger');
+import { createServer, proxy } from 'aws-serverless-express';
+import app from './app';
+import { info } from './utils/logger';
 
 // Create the server
-const server = awsServerlessExpress.createServer(app);
+const server = createServer(app);
 
 // Export the handler function
-exports.handler = (event, context) => {
-  logger.info('Lambda invocation', { event });
-  return awsServerlessExpress.proxy(server, event, context);
-};
+export function handler(event, context) {
+  info('Lambda invocation', { event });
+  return proxy(server, event, context);
+}

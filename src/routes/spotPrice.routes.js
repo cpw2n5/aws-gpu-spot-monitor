@@ -1,7 +1,6 @@
 const express = require('express');
 const spotPriceService = require('../services/spotPrice.service');
 const { BadRequestError } = require('../utils/errors');
-const logger = require('../utils/logger');
 
 const router = express.Router();
 

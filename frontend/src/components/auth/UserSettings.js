@@ -27,8 +27,6 @@ import {
   InputGroup,
   InputLeftElement,
   Input,
-  Checkbox,
-  CheckboxGroup,
   HStack,
   Tag,
   TagLabel,
