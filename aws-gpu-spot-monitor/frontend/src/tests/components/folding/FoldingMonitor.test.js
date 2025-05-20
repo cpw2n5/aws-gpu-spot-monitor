@@ -1,10 +1,9 @@
-import React from 'react';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
-import { render, mockServiceResponses, setupServiceMock, resetMocks } from '../../utils/test-utils';
+import { render, mockServiceResponses, resetMocks } from '../../utils/test-utils';
 import FoldingMonitor from '../../../components/folding/FoldingMonitor';
 import FoldingService from '../../../services/folding.service';
 import InstanceService from '../../../services/instance.service';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 
 // Mock the services
 jest.mock('../../../services/folding.service');

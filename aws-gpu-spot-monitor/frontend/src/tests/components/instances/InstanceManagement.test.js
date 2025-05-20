@@ -1,9 +1,8 @@
-import React from 'react';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
-import { render, mockServiceResponses, setupServiceMock, resetMocks } from '../../utils/test-utils';
+import { render, mockServiceResponses, resetMocks } from '../../utils/test-utils';
 import InstanceManagement from '../../../components/instances/InstanceManagement';
 import InstanceService from '../../../services/instance.service';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 
 // Mock the services
 jest.mock('../../../services/instance.service');
@@ -105,8 +104,9 @@ describe('InstanceManagement Component', () => {
     await waitFor(() => {
       // Check if at least one instance is rendered
       expect(screen.getByText('p3.2xlarge')).toBeInTheDocument();
-      expect(screen.getByText('us-east-1')).toBeInTheDocument();
     });
+    expect(screen.getByText('us-east-1')).toBeInTheDocument();
+
   });
 
   it('filters instances by tab selection', async () => {
@@ -163,10 +163,11 @@ describe('InstanceManagement Component', () => {
     // Check if all instances are initially rendered
     await waitFor(() => {
       expect(screen.getByText('p3.2xlarge')).toBeInTheDocument();
-      expect(screen.getByText('g4dn.xlarge')).toBeInTheDocument();
-      expect(screen.getByText('g4dn.2xlarge')).toBeInTheDocument();
     });
-    
+
+    expect(screen.getByText('g4dn.xlarge')).toBeInTheDocument();
+    expect(screen.getByText('g4dn.2xlarge')).toBeInTheDocument();
+
     // Click on the "Running" tab
     const runningTab = screen.getAllByText('Running')[1]; // Get the tab, not the stat card
     fireEvent.click(runningTab);
@@ -174,10 +175,11 @@ describe('InstanceManagement Component', () => {
     // Check if only running instances are rendered
     await waitFor(() => {
       expect(screen.getByText('p3.2xlarge')).toBeInTheDocument();
-      expect(screen.queryByText('g4dn.xlarge')).not.toBeInTheDocument();
-      expect(screen.queryByText('g4dn.2xlarge')).not.toBeInTheDocument();
     });
-    
+
+    expect(screen.queryByText('g4dn.xlarge')).not.toBeInTheDocument();
+    expect(screen.queryByText('g4dn.2xlarge')).not.toBeInTheDocument();
+
     // Click on the "Pending" tab
     const pendingTab = screen.getByText('Pending');
     fireEvent.click(pendingTab);
@@ -185,10 +187,10 @@ describe('InstanceManagement Component', () => {
     // Check if only pending instances are rendered
     await waitFor(() => {
       expect(screen.queryByText('p3.2xlarge')).not.toBeInTheDocument();
-      expect(screen.getByText('g4dn.xlarge')).toBeInTheDocument();
-      expect(screen.queryByText('g4dn.2xlarge')).not.toBeInTheDocument();
     });
-    
+    expect(screen.getByText('g4dn.xlarge')).toBeInTheDocument();
+    expect(screen.queryByText('g4dn.2xlarge')).not.toBeInTheDocument();
+
     // Click on the "Stopped" tab
     const stoppedTab = screen.getByText('Stopped');
     fireEvent.click(stoppedTab);
@@ -196,10 +198,10 @@ describe('InstanceManagement Component', () => {
     // Check if only stopped instances are rendered
     await waitFor(() => {
       expect(screen.queryByText('p3.2xlarge')).not.toBeInTheDocument();
-      expect(screen.queryByText('g4dn.xlarge')).not.toBeInTheDocument();
-      expect(screen.getByText('g4dn.2xlarge')).toBeInTheDocument();
     });
-    
+    expect(screen.queryByText('g4dn.xlarge')).not.toBeInTheDocument();
+    expect(screen.getByText('g4dn.2xlarge')).toBeInTheDocument();
+
     // Click on the "All" tab
     const allTab = screen.getByText('All');
     fireEvent.click(allTab);
@@ -207,9 +209,10 @@ describe('InstanceManagement Component', () => {
     // Check if all instances are rendered again
     await waitFor(() => {
       expect(screen.getByText('p3.2xlarge')).toBeInTheDocument();
-      expect(screen.getByText('g4dn.xlarge')).toBeInTheDocument();
-      expect(screen.getByText('g4dn.2xlarge')).toBeInTheDocument();
     });
+    expect(screen.getByText('g4dn.xlarge')).toBeInTheDocument();
+    expect(screen.getByText('g4dn.2xlarge')).toBeInTheDocument();
+
   });
 
   it('shows loading state when data is loading', async () => {
