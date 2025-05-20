@@ -4,6 +4,7 @@
   "description": "AWS GPU Spot Instance Monitor with Folding@Home integration",
   "main": "index.js",
   "scripts": {
+    "preinstall": "npx npm-force-resolutions",
     "start": "sls offline",
     "deploy": "sls deploy",
     "test": "jest"
@@ -38,7 +39,10 @@
   },
   "devDependencies": {
     "jest": "^29.6.4",
-    "serverless": "^3.34.0",
-    "serverless-offline": "^12.0.4"
+    "serverless": "^4.0.0",
+    "serverless-offline": "^14.4.0"
+  },
+  "overrides": {
+    "jsonpath-plus": "^7.2.0"
   }
 }
