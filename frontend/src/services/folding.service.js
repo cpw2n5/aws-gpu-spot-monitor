@@ -65,6 +65,16 @@ const FoldingService = {
   getInstanceStatus: async (instanceId) => {
     const response = await api.get(`/folding/instances/${instanceId}/status`);
     return response.data.data;
+  },
+  
+  /**
+   * Get GPU performance data for comparison charts
+   * @param {string} chartType - Type of chart (performancePerDollar, rawPerformance, availability)
+   * @returns {Promise} - Promise with GPU performance data
+   */
+  getGpuPerformanceData: async (chartType) => {
+    const response = await api.get('/folding/gpu-performance', { params: { chartType } });
+    return response.data.data;
   }
 };
 

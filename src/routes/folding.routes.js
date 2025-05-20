@@ -151,4 +151,29 @@ router.get('/instances/:id/status', async (req, res, next) => {
   }
 });
 
+/**
+ * @route GET /api/folding/gpu-performance
+ * @desc Get GPU performance data for comparison charts
+ * @access Private
+ * @query {string} chartType - Type of chart (performancePerDollar, rawPerformance, availability)
+ */
+router.get('/gpu-performance', async (req, res, next) => {
+  try {
+    const { chartType } = req.query;
+    
+    if (!chartType) {
+      throw new BadRequestError('Chart type is required');
+    }
+    
+    const performanceData = await foldingService.getGpuPerformanceData(chartType);
+    
+    res.status(200).json({
+      status: 'success',
+      data: performanceData
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

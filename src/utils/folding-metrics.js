@@ -339,8 +339,148 @@ const publishSpotPriceMetrics = async (instanceType, region, currentPrice, previ
   }
 };
 
+/**
+ * Publish GPU performance metrics for Folding@Home workloads
+ * @param {string} instanceId - Instance ID
+ * @param {string} instanceType - EC2 instance type
+ * @param {number} foldingPoints - Folding@Home points earned
+ * @param {number} foldingProgress - Folding@Home work unit progress (0-100)
+ * @param {number} spotPrice - Current spot price for the instance
+ * @returns {Promise<object>} Result with performance metrics
+ */
+const publishGpuPerformanceMetrics = async (instanceId, instanceType, foldingPoints, foldingProgress, spotPrice) => {
+  try {
+    // Extract GPU family from instance type
+    const instanceFamily = instanceType.split('.')[0];
+    const instanceSize = instanceType.split('.')[1];
+    
+    // Define GPU families and their characteristics
+    const gpuFamilies = {
+      'p2': { gpuModel: 'NVIDIA K80', architecture: 'Kepler' },
+      'p3': { gpuModel: 'NVIDIA V100', architecture: 'Volta' },
+      'p4d': { gpuModel: 'NVIDIA A100', architecture: 'Ampere' },
+      'p4de': { gpuModel: 'NVIDIA A100 80GB', architecture: 'Ampere' },
+      'p5': { gpuModel: 'NVIDIA H100', architecture: 'Hopper' },
+      'g3': { gpuModel: 'NVIDIA M60', architecture: 'Maxwell' },
+      'g3s': { gpuModel: 'NVIDIA M60', architecture: 'Maxwell' },
+      'g4dn': { gpuModel: 'NVIDIA T4', architecture: 'Turing' },
+      'g5': { gpuModel: 'NVIDIA A10G', architecture: 'Ampere' },
+      'g6': { gpuModel: 'NVIDIA L4', architecture: 'Ada Lovelace' },
+      'g6e': { gpuModel: 'NVIDIA L40S', architecture: 'Ada Lovelace' },
+      'gr6': { gpuModel: 'NVIDIA RTX 6000 Ada', architecture: 'Ada Lovelace' }
+    };
+    
+    // Get GPU details
+    const gpuDetails = gpuFamilies[instanceFamily] || {
+      gpuModel: 'Unknown',
+      architecture: 'Unknown'
+    };
+    
+    // Calculate performance metrics
+    // Points per dollar (higher is better)
+    const pointsPerDollar = spotPrice > 0 ? foldingPoints / spotPrice : 0;
+    
+    // Estimated completion time based on progress (simplified)
+    // This is a rough estimate assuming linear progress
+    const estimatedTimeRemaining = foldingProgress > 0 ?
+      (100 - foldingProgress) * (Date.now() / foldingProgress) / 3600000 : 0; // in hours
+    
+    // Common dimensions for all metrics
+    const dimensions = [
+      {
+        Name: 'InstanceId',
+        Value: instanceId
+      },
+      {
+        Name: 'InstanceType',
+        Value: instanceType
+      },
+      {
+        Name: 'GPUModel',
+        Value: gpuDetails.gpuModel
+      },
+      {
+        Name: 'GPUArchitecture',
+        Value: gpuDetails.architecture
+      },
+      {
+        Name: 'Environment',
+        Value: process.env.NODE_ENV || 'development'
+      }
+    ];
+    
+    // Prepare metric data
+    const metricData = [
+      // Points per dollar (efficiency metric)
+      {
+        MetricName: 'FoldingPointsPerDollar',
+        Dimensions: dimensions,
+        Value: pointsPerDollar,
+        Unit: 'None',
+        Timestamp: new Date()
+      },
+      // Estimated time remaining
+      {
+        MetricName: 'EstimatedTimeRemaining',
+        Dimensions: dimensions,
+        Value: estimatedTimeRemaining,
+        Unit: 'Hours',
+        Timestamp: new Date()
+      },
+      // GPU-specific folding performance
+      {
+        MetricName: 'GPUFoldingPerformance',
+        Dimensions: dimensions,
+        Value: foldingPoints,
+        Unit: 'Count',
+        Timestamp: new Date()
+      }
+    ];
+    
+    // Publish metrics to CloudWatch
+    await cloudWatch.putMetricData({
+      Namespace: NAMESPACE,
+      MetricData: metricData
+    }).promise();
+    
+    logger.info('Published GPU performance metrics to CloudWatch', {
+      metadata: {
+        instanceId,
+        instanceType,
+        gpuModel: gpuDetails.gpuModel,
+        architecture: gpuDetails.architecture,
+        pointsPerDollar,
+        estimatedTimeRemaining
+      }
+    });
+    
+    return {
+      success: true,
+      message: 'GPU performance metrics published successfully',
+      gpuModel: gpuDetails.gpuModel,
+      architecture: gpuDetails.architecture,
+      pointsPerDollar,
+      estimatedTimeRemaining
+    };
+  } catch (error) {
+    logger.error('Failed to publish GPU performance metrics', {
+      metadata: {
+        error: error.message,
+        instanceId,
+        instanceType
+      }
+    });
+    
+    return {
+      success: false,
+      message: `Failed to publish GPU metrics: ${error.message}`
+    };
+  }
+};
+
 module.exports = {
   publishFoldingMetrics,
   publishSpotInstanceMetrics,
-  publishSpotPriceMetrics
+  publishSpotPriceMetrics,
+  publishGpuPerformanceMetrics
 };

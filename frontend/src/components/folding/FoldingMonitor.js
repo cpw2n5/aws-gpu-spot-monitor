@@ -49,9 +49,48 @@ import {
 } from '@chakra-ui/react';
 import { FiRefreshCw, FiSettings, FiCpu, FiAward, FiTrendingUp, FiServer } from 'react-icons/fi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend
+} from 'recharts';
 import FoldingService from '../../services/folding.service';
 import InstanceService from '../../services/instance.service';
+
+/**
+ * Helper function to get GPU model name from instance type
+ * @param {string} instanceType - EC2 instance type
+ * @returns {string} GPU model name
+ */
+const getGpuModel = (instanceType) => {
+  // Extract instance family
+  const instanceFamily = instanceType?.split('.')?.[0] || '';
+  
+  // Map instance families to GPU models
+  const gpuModels = {
+    'p2': 'NVIDIA K80',
+    'p3': 'NVIDIA V100',
+    'p4d': 'NVIDIA A100',
+    'p4de': 'NVIDIA A100 80GB',
+    'p5': 'NVIDIA H100',
+    'g3': 'NVIDIA M60',
+    'g3s': 'NVIDIA M60',
+    'g4dn': 'NVIDIA T4',
+    'g5': 'NVIDIA A10G',
+    'g6': 'NVIDIA L4',
+    'g6e': 'NVIDIA L40S',
+    'gr6': 'NVIDIA RTX 6000 Ada'
+  };
+  
+  return gpuModels[instanceFamily] || 'Unknown GPU';
+};
 
 /**
  * FoldingMonitor component
@@ -390,6 +429,64 @@ const FoldingMonitor = () => {
         </TableContainer>
       </Box>
       
+      {/* GPU Performance Comparison */}
+      <Box
+        bg={useColorModeValue('white', 'gray.700')}
+        shadow={'xl'}
+        rounded={'lg'}
+        p={6}
+        mb={6}
+      >
+        <Heading as="h2" size="md" mb={4}>
+          GPU Performance Comparison
+        </Heading>
+        <Tabs variant="enclosed" colorScheme="blue">
+          <TabList>
+            <Tab>Performance/Price</Tab>
+            <Tab>Raw Performance</Tab>
+            <Tab>Availability</Tab>
+          </TabList>
+          <TabPanels>
+            <TabPanel>
+              <Box height="300px">
+                <Text mb={4} fontSize="sm">
+                  This chart shows the relative performance per dollar for different GPU instance types.
+                  Higher values indicate better cost efficiency for Folding@Home workloads.
+                </Text>
+                <GpuPerformanceChart
+                  chartType="performancePerDollar"
+                  instances={runningInstances}
+                />
+              </Box>
+            </TabPanel>
+            <TabPanel>
+              <Box height="300px">
+                <Text mb={4} fontSize="sm">
+                  This chart shows the raw performance of different GPU instance types.
+                  Higher values indicate faster completion of Folding@Home work units.
+                </Text>
+                <GpuPerformanceChart
+                  chartType="rawPerformance"
+                  instances={runningInstances}
+                />
+              </Box>
+            </TabPanel>
+            <TabPanel>
+              <Box height="300px">
+                <Text mb={4} fontSize="sm">
+                  This chart shows the availability of different GPU instance types in the spot market.
+                  Higher values indicate more reliable availability with fewer interruptions.
+                </Text>
+                <GpuPerformanceChart
+                  chartType="availability"
+                  instances={runningInstances}
+                />
+              </Box>
+            </TabPanel>
+          </TabPanels>
+        </Tabs>
+      </Box>
+      
       {/* Configuration Modal */}
       <Modal isOpen={isOpen} onClose={onClose}>
         <ModalOverlay />
@@ -480,18 +577,37 @@ const InstanceRow = ({ instance, onApplyConfig }) => {
   return (
     <Tr>
       <Td>{instance.instanceId}</Td>
-      <Td>{instance.instanceType}</Td>
+      <Td>
+        <VStack align="start" spacing={1}>
+          <Text>{instance.instanceType}</Text>
+          <Text fontSize="xs" color="gray.500">
+            {getGpuModel(instance.instanceType)}
+          </Text>
+        </VStack>
+      </Td>
       <Td>{instance.region}</Td>
       <Td>
         {isLoading ? (
           <Spinner size="sm" />
         ) : foldingStatus ? (
-          <HStack>
-            <Badge colorScheme="green">Active</Badge>
-            <Text fontSize="sm">
-              {foldingStatus.points || 0} pts / {foldingStatus.workUnits || 0} WUs
-            </Text>
-          </HStack>
+          <VStack align="start" spacing={1}>
+            <HStack>
+              <Badge colorScheme="green">Active</Badge>
+              <Text fontSize="sm">
+                {foldingStatus.points || 0} pts / {foldingStatus.workUnits || 0} WUs
+              </Text>
+            </HStack>
+            {foldingStatus.gpuMetrics && (
+              <HStack>
+                <Badge colorScheme="purple" variant="outline" size="sm">
+                  {foldingStatus.gpuMetrics.pointsPerDollar.toFixed(2)} pts/$
+                </Badge>
+                <Badge colorScheme="blue" variant="outline" size="sm">
+                  ~{foldingStatus.gpuMetrics.estimatedTimeRemaining.toFixed(1)}h remaining
+                </Badge>
+              </HStack>
+            )}
+          </VStack>
         ) : (
           <Badge colorScheme="yellow">Not configured</Badge>
         )}
@@ -552,6 +668,121 @@ const StatCard = ({ title, value, icon, helpText }) => {
       </Flex>
     </Stat>
   );
+};
+
+/**
+ * GPU Performance Chart component
+ * @param {Object} props - Component props
+ * @param {string} props.chartType - Type of chart to display (performancePerDollar, rawPerformance, availability)
+ * @param {Array} props.instances - List of instances
+ */
+const GpuPerformanceChart = ({ chartType, instances }) => {
+  // Query for GPU performance data
+  const { data: performanceData, isLoading } = useQuery({
+    queryKey: ['gpuPerformance', chartType],
+    queryFn: () => FoldingService.getGpuPerformanceData(chartType),
+    enabled: instances.length > 0,
+  });
+  
+  // Generate sample data if no real data is available yet
+  const generateSampleData = () => {
+    // Define GPU families to include in the chart
+    const gpuFamilies = [
+      { family: 'g6', name: 'NVIDIA L4', color: '#8884d8' },
+      { family: 'g5', name: 'NVIDIA A10G', color: '#82ca9d' },
+      { family: 'g6e', name: 'NVIDIA L40S', color: '#ffc658' },
+      { family: 'p3', name: 'NVIDIA V100', color: '#ff8042' },
+      { family: 'p4d', name: 'NVIDIA A100', color: '#0088fe' },
+      { family: 'p5', name: 'NVIDIA H100', color: '#00C49F' }
+    ];
+    
+    // Generate metrics based on chart type
+    if (chartType === 'performancePerDollar') {
+      return [
+        { name: 'g6 (L4)', value: 95, fill: '#8884d8' },
+        { name: 'g5 (A10G)', value: 85, fill: '#82ca9d' },
+        { name: 'g6e (L40S)', value: 75, fill: '#ffc658' },
+        { name: 'p3 (V100)', value: 65, fill: '#ff8042' },
+        { name: 'p4d (A100)', value: 55, fill: '#0088fe' },
+        { name: 'p5 (H100)', value: 45, fill: '#00C49F' }
+      ];
+    } else if (chartType === 'rawPerformance') {
+      return [
+        { name: 'g6 (L4)', value: 65, fill: '#8884d8' },
+        { name: 'g5 (A10G)', value: 75, fill: '#82ca9d' },
+        { name: 'g6e (L40S)', value: 85, fill: '#ffc658' },
+        { name: 'p3 (V100)', value: 70, fill: '#ff8042' },
+        { name: 'p4d (A100)', value: 90, fill: '#0088fe' },
+        { name: 'p5 (H100)', value: 100, fill: '#00C49F' }
+      ];
+    } else { // availability
+      return [
+        { name: 'g6 (L4)', value: 90, fill: '#8884d8' },
+        { name: 'g5 (A10G)', value: 85, fill: '#82ca9d' },
+        { name: 'g6e (L40S)', value: 70, fill: '#ffc658' },
+        { name: 'p3 (V100)', value: 80, fill: '#ff8042' },
+        { name: 'p4d (A100)', value: 60, fill: '#0088fe' },
+        { name: 'p5 (H100)', value: 40, fill: '#00C49F' }
+      ];
+    }
+  };
+  
+  // Use real data if available, otherwise use sample data
+  const chartData = performanceData || generateSampleData();
+  
+  // Loading state
+  if (isLoading) {
+    return (
+      <Flex justify="center" align="center" height="100%">
+        <Spinner
+          thickness="4px"
+          speed="0.65s"
+          emptyColor="gray.200"
+          color="blue.500"
+          size="xl"
+        />
+      </Flex>
+    );
+  }
+  
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart
+        data={chartData}
+        margin={{
+          top: 5,
+          right: 30,
+          left: 20,
+          bottom: 5,
+        }}
+      >
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="name" />
+        <YAxis />
+        <Tooltip />
+        <Legend />
+        <Bar dataKey="value" name={getChartLabel(chartType)} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+};
+
+/**
+ * Helper function to get chart label based on chart type
+ * @param {string} chartType - Type of chart
+ * @returns {string} Chart label
+ */
+const getChartLabel = (chartType) => {
+  switch (chartType) {
+    case 'performancePerDollar':
+      return 'Performance per Dollar';
+    case 'rawPerformance':
+      return 'Raw Performance';
+    case 'availability':
+      return 'Spot Availability';
+    default:
+      return 'Value';
+  }
 };
 
 export default FoldingMonitor;

@@ -21,7 +21,7 @@ apt-get install -y \
     htop \
     python3 \
     python3-pip \
-    nvidia-driver-525 \
+    nvidia-driver-550 \
     nvidia-cuda-toolkit \
     build-essential \
     ocl-icd-opencl-dev

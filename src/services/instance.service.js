@@ -414,10 +414,99 @@ const terminateInstance = async (instanceId) => {
   }
 };
 
+/**
+ * Get recommended instance types for Folding@Home workloads
+ * @param {string} region - AWS region (optional)
+ * @param {number} maxPrice - Maximum price willing to pay per hour (optional)
+ * @param {number} limit - Maximum number of recommendations to return (optional, default: 5)
+ * @returns {Promise<Array>} Sorted list of recommended instance types
+ */
+const getRecommendedInstanceTypes = async (region = null, maxPrice = null, limit = 5) => {
+  try {
+    // Get current spot prices for all GPU instance types
+    const spotPricesResponse = await spotPriceService.getCurrentSpotPrices(region);
+    const spotPrices = spotPricesResponse.prices;
+    
+    // Define performance weights for different GPU families (based on Folding@Home performance)
+    // Higher values indicate better performance for Folding@Home workloads
+    const performanceWeights = {
+      // Newer GPUs with better performance/price ratio get higher weights
+      'g6': 9.5,    // NVIDIA L4 - excellent performance/price
+      'g5': 9.0,    // NVIDIA A10G - very good performance
+      'g6e': 8.5,   // NVIDIA L40S - high performance but higher price
+      'gr6': 8.0,   // NVIDIA RTX 6000 Ada - good for specific workloads
+      'p3': 7.5,    // NVIDIA V100 - still good performance
+      'p4d': 7.0,   // NVIDIA A100 - high performance but expensive
+      'p4de': 7.0,  // NVIDIA A100 80GB - high performance but expensive
+      'p5': 6.5,    // NVIDIA H100 - highest performance but most expensive
+      'g4dn': 6.0,  // NVIDIA T4 - older but still decent
+      'g3': 4.0,    // NVIDIA M60 - older architecture
+      'p2': 3.0     // NVIDIA K80 - oldest architecture
+    };
+    
+    // Calculate score for each instance type based on price and performance
+    const instanceScores = [];
+    
+    for (const price of spotPrices) {
+      // Skip if price is above max price (if specified)
+      if (maxPrice !== null && price.price > maxPrice) {
+        continue;
+      }
+      
+      // Determine GPU family from instance type
+      const instanceFamily = price.instanceType.split('.')[0];
+      const instanceSize = price.instanceType.split('.')[1];
+      
+      // Get performance weight for this GPU family
+      const performanceWeight = performanceWeights[instanceFamily] || 5.0;
+      
+      // Calculate size factor (smaller instances often have better performance/price ratio)
+      let sizeFactor = 1.0;
+      if (instanceSize.includes('xlarge')) {
+        const xlargeFactor = parseInt(instanceSize.replace('xlarge', '')) || 1;
+        // Smaller instances get a slight boost for cost-effectiveness
+        sizeFactor = Math.max(0.8, 1.0 - (xlargeFactor * 0.02));
+      }
+      
+      // Calculate score (higher is better)
+      // Formula: (performance weight * size factor) / price
+      const score = (performanceWeight * sizeFactor) / price.price;
+      
+      instanceScores.push({
+        instanceType: price.instanceType,
+        region: price.region,
+        availabilityZone: price.availabilityZone,
+        price: price.price,
+        performanceWeight,
+        score,
+        gpuFamily: instanceFamily
+      });
+    }
+    
+    // Sort by score (descending)
+    instanceScores.sort((a, b) => b.score - a.score);
+    
+    // Get top recommendations
+    const recommendations = instanceScores.slice(0, limit);
+    
+    logger.info('Generated instance type recommendations', {
+      count: recommendations.length,
+      region,
+      maxPrice
+    });
+    
+    return recommendations;
+  } catch (error) {
+    logger.error('Error getting recommended instance types', { error, region, maxPrice });
+    throw error;
+  }
+};
+
 module.exports = {
   requestSpotInstance,
   getInstance,
   listInstances,
   updateInstanceStatus,
-  terminateInstance
+  terminateInstance,
+  getRecommendedInstanceTypes
 };

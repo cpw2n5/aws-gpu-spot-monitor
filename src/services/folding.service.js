@@ -329,6 +329,45 @@ const getInstanceStatus = async (userId, instanceId) => {
           
           // Publish metrics
           await foldingMetrics.publishFoldingMetrics(userId, instanceId, stats);
+          
+          // Get instance details for GPU performance metrics
+          const instanceDetails = await instanceService.getInstance(instanceId);
+          
+          // If we have instance type and spot price information, publish GPU performance metrics
+          if (instanceDetails && instanceDetails.instanceType) {
+            // Get current spot price for this instance type and region
+            let spotPrice = 0;
+            
+            try {
+              // Try to get the current spot price from the spot price service
+              const spotPricesResponse = await require('./spotPrice.service').getCurrentSpotPrices(
+                instanceDetails.region,
+                instanceDetails.instanceType
+              );
+              
+              if (spotPricesResponse && spotPricesResponse.prices && spotPricesResponse.prices.length > 0) {
+                // Use the first price found (should be the most recent)
+                spotPrice = spotPricesResponse.prices[0].price;
+              }
+            } catch (priceError) {
+              logger.warn('Failed to get spot price for GPU metrics', {
+                metadata: {
+                  error: priceError.message,
+                  instanceId,
+                  instanceType: instanceDetails.instanceType
+                }
+              });
+            }
+            
+            // Publish GPU-specific performance metrics
+            await foldingMetrics.publishGpuPerformanceMetrics(
+              instanceId,
+              instanceDetails.instanceType,
+              stats.score || 0,
+              foldingProgress,
+              spotPrice
+            );
+          }
         }
       }
       
@@ -387,11 +426,79 @@ const getInstanceStatus = async (userId, instanceId) => {
   }
 };
 
+/**
+ * Get GPU performance data for comparison charts
+ * @param {string} chartType - Type of chart (performancePerDollar, rawPerformance, availability)
+ * @returns {Promise<Array>} Performance data for chart
+ */
+const getGpuPerformanceData = async (chartType) => {
+  try {
+    // In a real implementation, this would query DynamoDB for actual performance metrics
+    // For now, we'll return sample data based on the chart type
+    
+    // Define GPU families to include in the chart
+    const gpuFamilies = [
+      { family: 'g6', name: 'g6 (L4)', color: '#8884d8' },
+      { family: 'g5', name: 'g5 (A10G)', color: '#82ca9d' },
+      { family: 'g6e', name: 'g6e (L40S)', color: '#ffc658' },
+      { family: 'p3', name: 'p3 (V100)', color: '#ff8042' },
+      { family: 'p4d', name: 'p4d (A100)', color: '#0088fe' },
+      { family: 'p5', name: 'p5 (H100)', color: '#00C49F' }
+    ];
+    
+    // Generate metrics based on chart type
+    let chartData = [];
+    
+    if (chartType === 'performancePerDollar') {
+      // Performance per dollar (higher is better)
+      // These values represent relative cost efficiency for Folding@Home workloads
+      chartData = [
+        { name: 'g6 (L4)', value: 95, fill: '#8884d8' },
+        { name: 'g5 (A10G)', value: 85, fill: '#82ca9d' },
+        { name: 'g6e (L40S)', value: 75, fill: '#ffc658' },
+        { name: 'p3 (V100)', value: 65, fill: '#ff8042' },
+        { name: 'p4d (A100)', value: 55, fill: '#0088fe' },
+        { name: 'p5 (H100)', value: 45, fill: '#00C49F' }
+      ];
+    } else if (chartType === 'rawPerformance') {
+      // Raw performance (higher is better)
+      // These values represent relative computational power for Folding@Home workloads
+      chartData = [
+        { name: 'g6 (L4)', value: 65, fill: '#8884d8' },
+        { name: 'g5 (A10G)', value: 75, fill: '#82ca9d' },
+        { name: 'g6e (L40S)', value: 85, fill: '#ffc658' },
+        { name: 'p3 (V100)', value: 70, fill: '#ff8042' },
+        { name: 'p4d (A100)', value: 90, fill: '#0088fe' },
+        { name: 'p5 (H100)', value: 100, fill: '#00C49F' }
+      ];
+    } else { // availability
+      // Spot instance availability (higher is better)
+      // These values represent relative availability in the spot market
+      chartData = [
+        { name: 'g6 (L4)', value: 90, fill: '#8884d8' },
+        { name: 'g5 (A10G)', value: 85, fill: '#82ca9d' },
+        { name: 'g6e (L40S)', value: 70, fill: '#ffc658' },
+        { name: 'p3 (V100)', value: 80, fill: '#ff8042' },
+        { name: 'p4d (A100)', value: 60, fill: '#0088fe' },
+        { name: 'p5 (H100)', value: 40, fill: '#00C49F' }
+      ];
+    }
+    
+    logger.info('Retrieved GPU performance data', { chartType });
+    
+    return chartData;
+  } catch (error) {
+    logger.error('Error getting GPU performance data', { error, chartType });
+    return null;
+  }
+};
+
 module.exports = {
   saveConfiguration,
   getConfiguration,
   deleteConfiguration,
   applyConfigurationToInstance,
   getStats,
-  getInstanceStatus
+  getInstanceStatus,
+  getGpuPerformanceData
 };

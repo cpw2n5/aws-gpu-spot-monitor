@@ -15,14 +15,38 @@ const ec2Client = new EC2Client({
 
 // Define GPU instance types
 const GPU_INSTANCE_TYPES = [
+  // P2 series (NVIDIA K80 GPUs)
   'p2.xlarge', 'p2.8xlarge', 'p2.16xlarge',
+  
+  // P3 series (NVIDIA V100 GPUs)
   'p3.2xlarge', 'p3.8xlarge', 'p3.16xlarge',
   'p3dn.24xlarge',
+  
+  // P4 series (NVIDIA A100 GPUs)
   'p4d.24xlarge',
+  'p4de.24xlarge', // Enhanced A100 instances with 80GB GPU memory
+  
+  // P5 series (NVIDIA H100 GPUs)
+  'p5.8xlarge', 'p5.16xlarge', 'p5.24xlarge', 'p5.48xlarge',
+  
+  // G3 series (NVIDIA M60 GPUs)
   'g3.4xlarge', 'g3.8xlarge', 'g3.16xlarge',
   'g3s.xlarge',
+  
+  // G4 series (NVIDIA T4 GPUs)
   'g4dn.xlarge', 'g4dn.2xlarge', 'g4dn.4xlarge', 'g4dn.8xlarge', 'g4dn.16xlarge', 'g4dn.12xlarge', 'g4dn.metal',
-  'g5.xlarge', 'g5.2xlarge', 'g5.4xlarge', 'g5.8xlarge', 'g5.16xlarge', 'g5.12xlarge', 'g5.24xlarge', 'g5.48xlarge'
+  
+  // G5 series (NVIDIA A10G GPUs)
+  'g5.xlarge', 'g5.2xlarge', 'g5.4xlarge', 'g5.8xlarge', 'g5.16xlarge', 'g5.12xlarge', 'g5.24xlarge', 'g5.48xlarge',
+  
+  // G6 series (NVIDIA L4 GPUs)
+  'g6.xlarge', 'g6.2xlarge', 'g6.4xlarge', 'g6.8xlarge', 'g6.12xlarge', 'g6.16xlarge', 'g6.24xlarge', 'g6.48xlarge',
+  
+  // G6e series (NVIDIA L40S GPUs)
+  'g6e.xlarge', 'g6e.2xlarge', 'g6e.4xlarge', 'g6e.8xlarge', 'g6e.12xlarge', 'g6e.16xlarge', 'g6e.24xlarge', 'g6e.48xlarge',
+  
+  // Gr6 series (NVIDIA RTX 6000 Ada GPUs)
+  'gr6.4xlarge', 'gr6.8xlarge'
 ];
 
 // Define AWS regions with GPU instances
