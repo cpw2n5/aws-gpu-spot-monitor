@@ -128,3 +128,9 @@ variable "folding_at_home_passkey" {
   default     = ""
   sensitive   = true
 }
+
+variable "github_repository" {
+  description = "The GitHub repository in the format 'owner/repo'"
+  type        = string
+  default     = "yourusername/aws-gpu-spot-monitor"
+}

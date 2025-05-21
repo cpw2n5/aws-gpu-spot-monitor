@@ -109,3 +109,18 @@ module "ec2" {
   # Pass other required variables
   user_data_script = file("${path.module}/../instance-templates/folding-at-home-init.sh")
 }
+
+# GitHub Actions OIDC Module for CI/CD
+module "github_actions_oidc" {
+  source      = "./modules/github_actions_oidc"
+  environment = local.environment
+  common_tags = local.common_tags
+  
+  # Pass required variables
+  aws_account_id = data.aws_caller_identity.current.account_id
+  aws_region     = var.aws_region
+  github_repository = var.github_repository
+}
+
+# Get AWS account ID
+data "aws_caller_identity" "current" {}

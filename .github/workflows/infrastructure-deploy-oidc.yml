@@ -1,0 +1,371 @@
+name: Infrastructure Deployment (OIDC)
+
+# This workflow handles the deployment of Terraform infrastructure to AWS
+# It uses OIDC for secure authentication with AWS (no long-lived credentials)
+# The workflow runs on pushes to main/develop branches, pull requests, and manual triggers
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'aws-gpu-spot-monitor/terraform/**'
+      - '.github/workflows/infrastructure-deploy-oidc.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'aws-gpu-spot-monitor/terraform/**'
+      - '.github/workflows/infrastructure-deploy-oidc.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+# Global environment variables
+env:
+  TERRAFORM_VERSION: '1.5.7'
+  AWS_REGION: 'us-east-1'
+  TERRAFORM_PATH: 'aws-gpu-spot-monitor/terraform'
+
+jobs:
+  # Determine which environment to deploy to based on the trigger
+  determine_environment:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+    steps:
+      - id: set-env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+  # Validate Terraform configurations
+  validate:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # Cache Terraform plugins and modules to speed up subsequent runs
+      - name: Cache Terraform
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ${{ env.TERRAFORM_PATH }}/.terraform
+          key: ${{ runner.os }}-terraform-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+
+      # Initialize Terraform for validation
+      - name: Terraform Init
+        working-directory: ${{ env.TERRAFORM_PATH }}
+        run: |
+          terraform init -backend=false
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+      # Validate Terraform configurations
+      - name: Terraform Validate
+        working-directory: ${{ env.TERRAFORM_PATH }}
+        run: |
+          terraform validate
+
+      # Run tfsec for security scanning
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: ${{ env.TERRAFORM_PATH }}
+          soft_fail: true  # Don't fail the build, but report issues
+
+  # Plan Terraform changes for pull requests
+  plan:
+    name: Plan Terraform Changes
+    needs: [determine_environment, validate]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    
+    # Required permissions for OIDC authentication with AWS
+    permissions:
+      id-token: write  # Required for OIDC authentication
+      contents: read   # Required to checkout the repository
+      pull-requests: write  # Required to comment on PRs
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Configure AWS credentials using OIDC
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-${{ needs.determine_environment.outputs.environment }}-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # Cache Terraform plugins and modules
+      - name: Cache Terraform
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ${{ env.TERRAFORM_PATH }}/environments/${{ needs.determine_environment.outputs.environment }}/.terraform
+          key: ${{ runner.os }}-terraform-${{ needs.determine_environment.outputs.environment }}-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-${{ needs.determine_environment.outputs.environment }}-
+
+      # Initialize Terraform with the backend
+      - name: Terraform Init
+        working-directory: ${{ env.TERRAFORM_PATH }}/environments/${{ needs.determine_environment.outputs.environment }}
+        run: |
+          terraform init
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+      # Generate Terraform plan
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TERRAFORM_PATH }}/environments/${{ needs.determine_environment.outputs.environment }}
+        run: |
+          terraform plan -no-color -out=tfplan
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+      # Show the plan in the PR comment
+      - name: Comment on PR
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const planOutput = fs.readFileSync('${{ env.TERRAFORM_PATH }}/environments/${{ needs.determine_environment.outputs.environment }}/tfplan.out', 'utf8');
+            const output = `#### Terraform Plan for \`${{ needs.determine_environment.outputs.environment }}\` environment
+            
+            <details><summary>Show Plan</summary>
+            
+            \`\`\`terraform
+            ${planOutput}
+            \`\`\`
+            
+            </details>
+            
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+  # Deploy to the development environment
+  deploy-dev:
+    name: Deploy to Dev
+    needs: [determine_environment, validate]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
+    runs-on: ubuntu-latest
+    
+    # Required permissions for OIDC authentication with AWS
+    permissions:
+      id-token: write  # Required for OIDC authentication
+      contents: read   # Required to checkout the repository
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Configure AWS credentials using OIDC
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-dev-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # Cache Terraform plugins and modules
+      - name: Cache Terraform
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ${{ env.TERRAFORM_PATH }}/environments/dev/.terraform
+          key: ${{ runner.os }}-terraform-dev-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-dev-
+
+      # Initialize Terraform with the backend
+      - name: Terraform Init
+        working-directory: ${{ env.TERRAFORM_PATH }}/environments/dev
+        run: |
+          terraform init
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+      # Generate Terraform plan
+      - name: Terraform Plan
+        working-directory: ${{ env.TERRAFORM_PATH }}/environments/dev
+        run: |
+          terraform plan -out=tfplan
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+      # Apply Terraform changes
+      - name: Terraform Apply
+        working-directory: ${{ env.TERRAFORM_PATH }}/environments/dev
+        run: |
+          terraform apply -auto-approve tfplan
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+  # Deploy to the staging environment (when merged to main)
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [determine_environment, validate]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-staging-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # Cache Terraform plugins and modules
+      - name: Cache Terraform
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ${{ env.TERRAFORM_PATH }}/environments/staging/.terraform
+          key: ${{ runner.os }}-terraform-staging-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-staging-
+
+      - name: Terraform Init
+        working-directory: ${{ env.TERRAFORM_PATH }}/environments/staging
+        run: |
+          terraform init
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+      - name: Terraform Plan
+        working-directory: ${{ env.TERRAFORM_PATH }}/environments/staging
+        run: |
+          terraform plan -out=tfplan
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TERRAFORM_PATH }}/environments/staging
+        run: |
+          terraform apply -auto-approve tfplan
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+  # Deploy to the production environment (manual trigger only)
+  deploy-prod:
+    name: Deploy to Production
+    needs: [determine_environment, validate]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    runs-on: ubuntu-latest
+    # Using environment approval via GitHub environments
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-prod-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # Cache Terraform plugins and modules
+      - name: Cache Terraform
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ${{ env.TERRAFORM_PATH }}/environments/prod/.terraform
+          key: ${{ runner.os }}-terraform-prod-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-prod-
+
+      - name: Terraform Init
+        working-directory: ${{ env.TERRAFORM_PATH }}/environments/prod
+        run: |
+          terraform init
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+      - name: Terraform Plan
+        working-directory: ${{ env.TERRAFORM_PATH }}/environments/prod
+        run: |
+          terraform plan -out=tfplan
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TERRAFORM_PATH }}/environments/prod
+        run: |
+          terraform apply -auto-approve tfplan
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache

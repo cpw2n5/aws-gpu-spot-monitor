@@ -1,0 +1,294 @@
+name: Frontend Deployment (OIDC)
+
+# This workflow handles the deployment of the frontend React application to AWS S3/CloudFront
+# It uses OIDC for secure authentication with AWS (no long-lived credentials)
+# The workflow runs on pushes to main/develop branches, pull requests, and manual triggers
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'aws-gpu-spot-monitor/frontend/**'
+      - '.github/workflows/frontend-deploy-oidc.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'aws-gpu-spot-monitor/frontend/**'
+      - '.github/workflows/frontend-deploy-oidc.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+# Global environment variables
+env:
+  NODE_VERSION: '18'
+  AWS_REGION: 'us-east-1'
+  FRONTEND_PATH: 'aws-gpu-spot-monitor/frontend'
+
+jobs:
+  # Determine which environment to deploy to based on the trigger
+  determine_environment:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+    steps:
+      - id: set-env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+  # Run tests to ensure code quality
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: '${{ env.FRONTEND_PATH }}/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: ${{ env.FRONTEND_PATH }}
+        run: npm ci  # Clean install preserves the exact versions in package-lock.json
+
+      - name: Run tests
+        working-directory: ${{ env.FRONTEND_PATH }}
+        run: npm test -- --watchAll=false  # Run tests in CI mode (non-interactive)
+
+  # Perform security scanning of dependencies
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: '${{ env.FRONTEND_PATH }}/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: ${{ env.FRONTEND_PATH }}
+        run: npm ci
+
+      - name: Run npm audit
+        working-directory: ${{ env.FRONTEND_PATH }}
+        run: npm audit --audit-level=high || echo "Audit found issues but continuing"
+        # We continue even if audit finds issues to avoid blocking the pipeline
+        # High severity issues should be reviewed after the workflow completes
+
+  # Build the frontend application
+  build:
+    name: Build
+    needs: [test, security-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: '${{ env.FRONTEND_PATH }}/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: ${{ env.FRONTEND_PATH }}
+        run: npm ci
+
+      # Set environment-specific variables for the build
+      - name: Set environment variables
+        id: set-env-vars
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "REACT_APP_API_URL=https://api-dev.example.com" >> $GITHUB_ENV
+            echo "REACT_APP_ENVIRONMENT=development" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" == "refs/heads/develop" ]; then
+            echo "REACT_APP_API_URL=https://api-dev.example.com" >> $GITHUB_ENV
+            echo "REACT_APP_ENVIRONMENT=development" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "REACT_APP_API_URL=https://api-staging.example.com" >> $GITHUB_ENV
+            echo "REACT_APP_ENVIRONMENT=staging" >> $GITHUB_ENV
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            if [ "${{ github.event.inputs.environment }}" == "dev" ]; then
+              echo "REACT_APP_API_URL=https://api-dev.example.com" >> $GITHUB_ENV
+              echo "REACT_APP_ENVIRONMENT=development" >> $GITHUB_ENV
+            elif [ "${{ github.event.inputs.environment }}" == "staging" ]; then
+              echo "REACT_APP_API_URL=https://api-staging.example.com" >> $GITHUB_ENV
+              echo "REACT_APP_ENVIRONMENT=staging" >> $GITHUB_ENV
+            else
+              echo "REACT_APP_API_URL=https://api.example.com" >> $GITHUB_ENV
+              echo "REACT_APP_ENVIRONMENT=production" >> $GITHUB_ENV
+            fi
+          fi
+
+      - name: Build frontend
+        working-directory: ${{ env.FRONTEND_PATH }}
+        run: npm run build
+        env:
+          CI: true  # Ensures build fails on warnings
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: ${{ env.FRONTEND_PATH }}/build
+          retention-days: 1  # Only need to keep the artifact for a short time
+
+  # Deploy to the development environment
+  deploy-dev:
+    name: Deploy to Dev
+    needs: [determine_environment, build]
+    if: needs.determine_environment.outputs.environment == 'dev'
+    runs-on: ubuntu-latest
+    
+    # Required permissions for OIDC authentication with AWS
+    permissions:
+      id-token: write  # Required for OIDC authentication
+      contents: read   # Required to checkout the repository
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: build
+
+      # Configure AWS credentials using OIDC
+      # This uses temporary credentials instead of long-lived access keys
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-dev-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Deploy to S3 bucket
+      - name: Deploy to S3
+        run: |
+          aws s3 sync build/ s3://aws-gpu-spot-monitor-dev-frontend --delete
+          echo "Deployed to S3 bucket: aws-gpu-spot-monitor-dev-frontend"
+
+      # Invalidate CloudFront cache to ensure users get the latest version
+      - name: Invalidate CloudFront cache
+        run: |
+          DISTRIBUTION_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?Aliases.Items!=null] | [?contains(Aliases.Items, 'aws-gpu-spot-monitor-dev')].Id" --output text)
+          if [ -n "$DISTRIBUTION_ID" ]; then
+            aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
+            echo "Invalidated CloudFront cache for distribution: $DISTRIBUTION_ID"
+          else
+            echo "No matching CloudFront distribution found"
+          fi
+
+  # Deploy to the staging environment (when merged to main)
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [determine_environment, build]
+    if: needs.determine_environment.outputs.environment == 'staging'
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-staging-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync build/ s3://aws-gpu-spot-monitor-staging-frontend --delete
+          echo "Deployed to S3 bucket: aws-gpu-spot-monitor-staging-frontend"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DISTRIBUTION_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?Aliases.Items!=null] | [?contains(Aliases.Items, 'aws-gpu-spot-monitor-staging')].Id" --output text)
+          if [ -n "$DISTRIBUTION_ID" ]; then
+            aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
+            echo "Invalidated CloudFront cache for distribution: $DISTRIBUTION_ID"
+          else
+            echo "No matching CloudFront distribution found"
+          fi
+
+  # Deploy to the production environment (manual trigger only)
+  deploy-prod:
+    name: Deploy to Production
+    needs: [determine_environment, build]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-prod-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync build/ s3://aws-gpu-spot-monitor-prod-frontend --delete
+          echo "Deployed to S3 bucket: aws-gpu-spot-monitor-prod-frontend"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DISTRIBUTION_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?Aliases.Items!=null] | [?contains(Aliases.Items, 'aws-gpu-spot-monitor-prod')].Id" --output text)
+          if [ -n "$DISTRIBUTION_ID" ]; then
+            aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
+            echo "Invalidated CloudFront cache for distribution: $DISTRIBUTION_ID"
+          else
+            echo "No matching CloudFront distribution found"
+          fi

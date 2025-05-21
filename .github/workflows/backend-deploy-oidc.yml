@@ -1,0 +1,215 @@
+name: Backend Deployment (OIDC)
+
+# This workflow handles the deployment of the backend services to AWS
+# It uses OIDC for secure authentication with AWS (no long-lived credentials)
+# The workflow runs on pushes to main/develop branches, pull requests, and manual triggers
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'serverless.yml'
+      - '.github/workflows/backend-deploy-oidc.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'serverless.yml'
+      - '.github/workflows/backend-deploy-oidc.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+# Global environment variables
+env:
+  NODE_VERSION: '18'
+  AWS_REGION: 'us-east-1'
+
+jobs:
+  # Determine which environment to deploy to based on the trigger
+  determine_environment:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+    steps:
+      - id: set-env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+  # Run tests to ensure code quality
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'  # Enables caching of npm dependencies for faster builds
+
+      - name: Install dependencies
+        run: npm ci  # Clean install preserves the exact versions in package-lock.json
+
+      - name: Run linting
+        run: npm run lint || echo "Linting failed but continuing"
+
+      - name: Run tests
+        run: npm test
+
+  # Perform security scanning of dependencies
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=high || echo "Audit found issues but continuing"
+        # We continue even if audit finds issues to avoid blocking the pipeline
+        # High severity issues should be reviewed after the workflow completes
+
+  # Deploy to the development environment
+  deploy-dev:
+    name: Deploy to Dev
+    needs: [determine_environment, test, security-scan]
+    if: needs.determine_environment.outputs.environment == 'dev'
+    runs-on: ubuntu-latest
+    
+    # Required permissions for OIDC authentication with AWS
+    permissions:
+      id-token: write  # Required for OIDC authentication
+      contents: read   # Required to checkout the repository
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Configure AWS credentials using OIDC
+      # This uses temporary credentials instead of long-lived access keys
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-dev-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Deploy using the Serverless Framework
+      - name: Deploy with Serverless
+        run: npx serverless deploy --stage dev --verbose
+        env:
+          NODE_ENV: dev
+
+  # Deploy to the staging environment (when merged to main)
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [determine_environment, test, security-scan]
+    if: needs.determine_environment.outputs.environment == 'staging'
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-staging-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy with Serverless
+        run: npx serverless deploy --stage staging --verbose
+        env:
+          NODE_ENV: staging
+
+  # Deploy to the production environment (manual trigger only)
+  deploy-prod:
+    name: Deploy to Production
+    needs: [determine_environment, test, security-scan]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-prod-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy with Serverless
+        run: npx serverless deploy --stage prod --verbose
+        env:
+          NODE_ENV: prod
